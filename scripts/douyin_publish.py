@@ -127,19 +127,33 @@ def gen_title(d):
     return clip(cands[-1], TITLE_MAX)
 
 
+def nv(v):
+    """None 安全显示"""
+    return "-" if v is None else v
+
+
+def pct_str(v, sign=True):
+    """None/非法值安全百分比"""
+    try:
+        v = float(v)
+        return f"{'+' if sign and v >= 0 else ''}{v:.2f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
 def gen_desc(d):
     date = d.get("date", "")
     mmdd = date[5:7] + date[8:10] if len(date) >= 10 else date
     s = d.get("sentiment", "")
     node = first_sentence(d.get("node_note", ""), 24)
     pred = d.get("next_pred", "")
-    mx, ms = d.get("max_streak_name", ""), d.get("max_streak", "")
+    mx, ms = nv(d.get("max_streak_name")), nv(d.get("max_streak"))
     note = first_sentence(d.get("sentiment_note", ""), 58)
     focus = [f.split(" ")[0] for f in (d.get("focus_stocks") or [])[:3]]
     lines = [
         f"{mmdd} A股涨停复盘|情绪:{s}" + (f"(节点日:{node})" if node else ""),
-        f"涨停 {d.get('limit_up','-')} 家 · 连板 {d.get('lb_count','-')} · "
-        f"炸板率 {d.get('broken_rate','-')}% · 最高板 {mx}{ms}板 · 昨日涨停溢价 {d.get('premium_pct','-')}%",
+        f"涨停 {nv(d.get('limit_up'))} 家 · 连板 {nv(d.get('lb_count'))} · "
+        f"炸板率 {nv(d.get('broken_rate'))}% · 最高板 {mx}{ms}板 · 昨日涨停溢价 {pct_str(d.get('premium_pct'))}",
         f"明日预判:{pred}。{note}",
     ]
     if focus:
@@ -281,27 +295,58 @@ def set_text(cdp, kind, value):
             " return 'NO_MATCH'; })()"
         )
     else:
-        js = (
-            "(function(){ var v=" + v + ";"
-            " var pri=document.querySelectorAll("
+        # 定位简介框并存全局引用
+        loc = cdp.eval_js(
+            "(function(){ var pri=document.querySelectorAll("
             "  'textarea[placeholder*=\"简介\"],textarea[placeholder*=\"更多\"],"
             "div[contenteditable=\\'true\\']');"
             " var cand=null;"
             " for(var i=0;i<pri.length;i++){ var e=pri[i];"
             "  var ph=e.placeholder||e.getAttribute('placeholder')||'';"
+            "  var bb=e.getBoundingClientRect();"
+            "  if(bb.width<2||bb.height<2) continue;"
             "  if(e.tagName==='TEXTAREA'||/简介|更多|描述|输入/.test(ph)){ cand=e; break; }"
             "  if(!cand&&e.isContentEditable) cand=e; }"
             " if(!cand) return 'NO_MATCH';"
-            " cand.focus();"
-            " document.execCommand('selectAll',false,null);"
-            " document.execCommand('delete',false,null);"
+            " window.__descEl=cand; cand.focus(); return 'FOUND'; })()"
+        )
+        if loc != "FOUND":
+            return loc
+        # 强力清空:execCommand selectAll+delete 循环,Ctrl+A/Delete 真实按键兜底
+        for _ in range(3):
+            n = cdp.eval_js(
+                "(function(){ var e=window.__descEl; e.focus();"
+                " document.execCommand('selectAll',false,null);"
+                " document.execCommand('delete',false,null);"
+                " return (e.innerText||'').trim().length; })()"
+            )
+            if not n:
+                break
+            cdp.call("Input.dispatchKeyEvent", type="keyDown", modifiers=2,
+                     key="a", code="KeyA", windowsVirtualKeyCode=65)
+            cdp.call("Input.dispatchKeyEvent", type="keyUp", modifiers=2,
+                     key="a", code="KeyA", windowsVirtualKeyCode=65)
+            cdp.call("Input.dispatchKeyEvent", type="keyDown", key="Delete",
+                     code="Delete", windowsVirtualKeyCode=46)
+            cdp.call("Input.dispatchKeyEvent", type="keyUp", key="Delete",
+                     code="Delete", windowsVirtualKeyCode=46)
+            time.sleep(0.5)
+        leftover = cdp.eval_js("(window.__descEl.innerText||'').trim().length")
+        if leftover:
+            return "CANT_CLEAR:" + str(leftover)
+        # 逐行 insertHTML(行间 <br>)
+        v = json.dumps(value, ensure_ascii=False)
+        r = cdp.eval_js(
+            "(function(){ var v=" + v + ";"
+            " var e=window.__descEl; e.focus();"
             " var lines=v.split('\\n');"
             " var html=lines.map(function(l){"
             "  return l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');"
             " }).join('<br>');"
             " document.execCommand('insertHTML',false,html);"
-            " return 'OK:'+(cand.tagName)+':'+(cand.innerText||'').length; })()"
+            " return 'OK:'+(e.innerText||'').length; })()"
         )
+        return r
     return cdp.eval_js(js)
 
 
