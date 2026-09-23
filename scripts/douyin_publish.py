@@ -25,15 +25,48 @@ import os
 import sys
 import time
 import urllib.request
+from datetime import datetime
 
 import websocket
 
 DEBUG_PORT = 9224
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_URL = "https://creator.douyin.com/creator-micro/content/upload"
-TOPICS = "#涨停复盘 #短线打板"
 TITLE_MAX = 20  # 抖音图文标题上限实测 20 字符(页面提示"标题内容仅支持20个字符"),留 1 字余量
 DIAG_NAME = "_publish_diag.json"
+
+# 内容合规改造(2026-09-23 限流反馈后):
+# 1) 标题/简介不再出现个股名与"明日关注:XXX"——荐股红线
+# 2) 标题池按情绪分风格、按日期确定性轮换,打破"每日同模板"画像
+# 3) 话题标签按星期轮换,不再固定双标签
+# 4) 简介改为自然语言 + 操作纪律话术(纪律不荐股)
+TITLE_POOL = {
+    "退潮": ["今天的市场,给追高的人上了课",
+             "高度板没了,接下来怎么看",
+             "盘面冷下来了,这些信号要记住"],
+    "降温": ["盘面又冷了一点,明天会更难吗",
+             "钱变谨慎了,今天的数据说明一切"],
+    "分歧": ["有人赚钱有人亏,今天盘面很诚实",
+             "方向没变,节奏变了"],
+    "升温": ["盘面回暖,今天的数据值得看一眼"],
+    "加速": ["情绪在加速,热闹背后要想清楚"],
+    "冰点": ["盘面冷到冰点,反而是观察窗口"],
+    "回暖": ["止跌回升,今天的盘面有点意思"],
+}
+STRATEGY = {
+    "退潮": "退潮期纪律:控制仓位、少出手,等情绪止跌信号",
+    "降温": "降温期纪律:只看高位股承接,不追不抢",
+    "分歧": "分歧期纪律:方向未明,轻仓试错快进快出",
+    "升温": "升温期纪律:跟随主线,注意节奏",
+    "加速": "加速期纪律:警惕情绪顶部,兑现为主",
+    "冰点": "冰点期纪律:观察止跌信号,备好名单等回暖",
+    "回暖": "回暖期纪律:关注修复主线,逐步参与",
+}
+TOPICS_BY_WD = {
+    0: "#A股日记 #股市观察", 1: "#盘面手记 #交易日记", 2: "#股市观察 #复盘日记",
+    3: "#交易日记 #盘面观察", 4: "#复盘日记 #A股观察", 5: "#盘面手记 #股市观察",
+    6: "#交易日记 #复盘日记",
+}
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -104,27 +137,13 @@ def clip(s, n):
 
 
 def gen_title(d):
+    """按情绪选风格池、按日期确定性轮换——每天结构不同,无个股、无模板词。"""
     date = d.get("date", "")
-    try:
-        _y, m, dd = date.split("-")
-        mmdd = f"{int(m)}{int(dd)}"  # 去前导零,省字符:0922 -> 922
-    except ValueError:
-        mmdd = date[5:7] + date[8:10]
     s = d.get("sentiment", "")
-    lu = d.get("limit_up", "-")
-    pred = d.get("next_pred", "")
-    mx = d.get("max_streak_name", "")
-    ms = d.get("max_streak", "")
-    cands = [
-        f"{mmdd}复盘|{s}·涨停{lu}家,明日{pred}",
-        f"{mmdd}复盘|{s}·{mx}{ms}板,明日{pred}",
-        f"{mmdd}复盘|{s},明日{pred}",
-        f"{mmdd}涨停复盘|{s}",
-    ]
-    for t in cands:
-        if len(t) <= TITLE_MAX - 1:
-            return t
-    return clip(cands[-1], TITLE_MAX)
+    pool = TITLE_POOL.get(s) or [f"{s}的一天,盘面手记"]
+    idx = int(date.replace("-", "")) % len(pool)
+    t = pool[idx]
+    return t if len(t) <= TITLE_MAX - 1 else clip(t, TITLE_MAX)
 
 
 def nv(v):
@@ -142,23 +161,28 @@ def pct_str(v, sign=True):
 
 
 def gen_desc(d):
+    """自然语言简介:数据+情绪+纪律话术。无个股名、无荐股指向、话题按星期轮换。"""
     date = d.get("date", "")
-    mmdd = date[5:7] + date[8:10] if len(date) >= 10 else date
+    try:
+        wd = datetime.strptime(date, "%Y-%m-%d").weekday()
+    except ValueError:
+        wd = 0
+    md = f"{int(date[5:7])}/{int(date[8:10])}" if len(date) >= 10 else date
     s = d.get("sentiment", "")
-    node = first_sentence(d.get("node_note", ""), 24)
     pred = d.get("next_pred", "")
+    note = first_sentence(d.get("sentiment_note", ""), 46)
+    strategy = STRATEGY.get(s, "按情绪周期纪律执行")
+    topics = TOPICS_BY_WD.get(wd, "#股市观察 #交易日记")
     mx, ms = nv(d.get("max_streak_name")), nv(d.get("max_streak"))
-    note = first_sentence(d.get("sentiment_note", ""), 58)
-    focus = [f.split(" ")[0] for f in (d.get("focus_stocks") or [])[:3]]
     lines = [
-        f"{mmdd} A股涨停复盘|情绪:{s}" + (f"(节点日:{node})" if node else ""),
-        f"涨停 {nv(d.get('limit_up'))} 家 · 连板 {nv(d.get('lb_count'))} · "
-        f"炸板率 {nv(d.get('broken_rate'))}% · 最高板 {mx}{ms}板 · 昨日涨停溢价 {pct_str(d.get('premium_pct'))}",
-        f"明日预判:{pred}。{note}",
+        f"{md} 盘面手记 | 情绪:{s},明日预判:{pred}",
+        f"今天涨停 {nv(d.get('limit_up'))} 家、炸板率 {nv(d.get('broken_rate'))}%,"
+        f"最高板回到 {ms} 板({mx}),大面 {nv(d.get('big_face_count'))} 只。",
+        note,
+        strategy,
+        "个人复盘记录,不构成投资建议。",
+        topics,
     ]
-    if focus:
-        lines.append("明日关注:" + "/".join(focus))
-    lines.append(TOPICS)
     return "\n".join(lines)
 
 

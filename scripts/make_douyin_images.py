@@ -37,6 +37,27 @@ SENT_COLORS = {
 SENT_ORDER = ["冰点", "回暖", "升温", "加速", "分歧", "退潮", "降温"]
 TOTAL = 7
 
+# 内容合规改造(2026-09-23 限流反馈后):
+# 卡3 的"明日关注:个股"改为"操作纪律"话术(去荐股指向);
+# 页眉徽章按日期轮换,打破"每日同模板"画像。
+STRATEGY = {
+    "退潮": "退潮期纪律:控制仓位、少出手,等情绪止跌信号;高位股断板潮中不接飞刀",
+    "降温": "降温期纪律:只看高位股承接,不追不抢;注意量能是否继续萎缩",
+    "分歧": "分歧期纪律:方向未明,轻仓试错快进快出;聚焦主线,放弃杂毛",
+    "升温": "升温期纪律:跟随主线,注意节奏;前排锁仓,后排谨慎",
+    "加速": "加速期纪律:警惕情绪顶部,兑现为主;高位票不恋战",
+    "冰点": "冰点期纪律:观察止跌信号,备好名单等回暖;冰点后的首根大阳线是信号",
+    "回暖": "回暖期纪律:关注修复主线,逐步参与;首板层质量比高度更重要",
+}
+HEADER_BADGES = ["A股盘面日记", "今日盘面手记", "复盘手记", "盘面观察"]
+
+
+def pick_badge(date):
+    try:
+        return HEADER_BADGES[int(date.replace("-", "")) % len(HEADER_BADGES)]
+    except (ValueError, AttributeError):
+        return HEADER_BADGES[0]
+
 
 def first_sentence(s, maxlen=84):
     """取第一句;超长截断。用于长 note 的卡片化。"""
@@ -122,7 +143,7 @@ body{font-family:'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif;
 def shell(title_text, subtitle_html, body_html, date, weekday, idx):
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>{BASE_CSS}</style></head><body><div class="page">
-<div class="hd"><span class="badge">A股涨停复盘</span>
+<div class="hd"><span class="badge">{pick_badge(date)}</span>
 <span class="date">{date} {weekday}</span></div>
 <div class="title"><span class="bar"></span>{title_text}</div>
 <div class="subtitle">{subtitle_html}</div>
@@ -269,14 +290,8 @@ def card_emotion(d):
         for k, v, col in rows
     )
     note = first_sentence(d.get("node_note", ""), 90)
-    focus = []
-    for f in (d.get("focus_stocks") or [])[:3]:
-        name = f.split(" ")[0] if f else ""
-        desc = f.split("——", 1)[1] if "——" in f else f
-        focus.append((name, clip(first_sentence(desc, 60), 34)))
-    focus_html = "".join(
-        f'<div class="fs"><b>{n}</b><span>{t}</span></div>' for n, t in focus
-    )
+    # 内容合规:"明日关注:个股"→"操作纪律"话术(去荐股指向)
+    strategy = STRATEGY.get(cur, "按情绪周期纪律执行")
     body = f"""
 <style>
 .cycle{{display:flex;align-items:center;justify-content:space-between;
@@ -299,16 +314,14 @@ def card_emotion(d):
 .predlab{{font-size:28px;color:#6b6257;font-weight:700}}
 .focus{{background:#fff;border:1px dashed #cfc4b4;border-radius:16px;padding:16px 24px}}
 .fh{{font-size:26px;font-weight:800;color:#8a6d3b;margin-bottom:8px}}
-.fs{{font-size:25px;line-height:1.45;color:#3c372f}}
-.fs b{{color:#c0392b;margin-right:10px}}
-.fs span{{color:#6b6257}}
+.fs{{font-size:25px;line-height:1.5;color:#3c372f;font-weight:600}}
 </style>
 <div class="cycle">{cycle}</div>
 <div class="nrow">{note}</div>
 <div class="rows">{table}</div>
 <div class="predline"><span class="predbig">{pred}</span>
   <span class="predlab">明日情绪预判</span></div>
-<div class="focus"><div class="fh">明日关注</div>{focus_html}</div>
+<div class="focus"><div class="fh">操作纪律</div><div class="fs">{strategy}</div></div>
 """
     return shell("情绪周期 · 五指标判读", "七词周期:冰点→回暖→升温→加速→分歧→退潮→降温",
                  body, d.get("date", ""), d.get("weekday", ""), 3)
