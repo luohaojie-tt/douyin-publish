@@ -101,7 +101,7 @@ sentiment_note, node_day, node_note, focus_stocks[], risk_signals[], watch_next[
 3. **曲名括号是全角（）**：音乐面板的曲名如「清明上河图（同花顺进行曲）」，做字符串匹配必须用全角，半角永远 NOT_FOUND
 4. **音乐面板打开按钮对 JS click 和 CDP 真实鼠标全部免疫**（自管事件组件），面板内搜索/选歌自动化也不稳（虚拟列表 + 结果集漂移）→ 定案人工选歌
 5. **面板关闭时 React keep-alive 保留隐藏 DOM**：`offsetParent` 和 rect 尺寸都会骗人，真伪判据用 `elementFromPoint`
-6. **首次发布弹短信二次验证**（本人手机验证码），人工输入后流程自动走完，后续低频复验
+6. **发布可能弹短信二次验证**(连续两天实测都弹)（本人手机验证码），人工输入后流程自动走完，后续低频复验
 7. 发布成功判据：URL 跳 `content/manage?enter_from=publish` + 作品列表出现「N张 | 标题」+ 发布时间
 8. React 页面 `element.click()` 不保证触发 onClick——先 JS click，失败再用 `Input.dispatchMouseEvent` 真实鼠标；两者都无效 = 组件自管事件，转人工
 9. 搜索框做兜底选择时**必须排除主页面业务输入框**（否则关键词会打进标题里）
