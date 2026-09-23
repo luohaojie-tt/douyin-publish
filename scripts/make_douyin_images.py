@@ -27,9 +27,9 @@ CHROME_CANDS = [
 ]
 
 # A 股红涨绿跌 + 情绪七词配色(与驾驶舱/工作台一致)
-UP, DOWN = "#c0392b", "#1e7d43"
-INK, SUB = "#22282e", "#6b6257"
-PAPER, LINE = "#f6f4ef", "#e4ddd2"
+UP, DOWN = "#c0392b", "{DOWN}"
+INK, SUB = "{INK}", "{SUB}"
+PAPER, LINE = "#f6f4ef", "{LINE}"
 SENT_COLORS = {
     "冰点": "#4a6fa5", "回暖": "#3f9d76", "升温": "#e0a63f", "加速": "#b8352c",
     "分歧": "#9a5cc4", "退潮": "#6b7280", "降温": "#7d99c0",
@@ -157,29 +157,77 @@ def pick_date(argv):
     return files[-1].stem
 
 
-# ---------------------------------------------------------------- 公共骨架
-BASE_CSS = """
+# ---------------------------------------------------------------- 主题系统
+THEMES = {
+    "light": {  # 浅色纸感(偶数日)
+        "name": "light", "paper": "#f6f4ef", "card": "#ffffff", "ink": "{INK}",
+        "sub": "{SUB}", "line": "{LINE}", "up": "#c0392b", "down": "{DOWN}",
+        "chipbg": "{CHIPBG}", "badge": "#c0392b", "badge_fg": "#ffffff",
+        "accent": "{ACCENT}", "warnbg": "{WARNBG}", "warnline": "{WARNLINE}",
+        "medal2": "#a94a2c", "medal3": "{SUB}", "lbbg": "{LBBG}",
+        "hot": "#c0392b",
+    },
+    "dark": {  # 深色行情终端风(奇数日)
+        "name": "dark", "paper": "#10141b", "card": "#171d26", "ink": "#e6eaf2",
+        "sub": "#7f8ba0", "line": "#262f3d", "up": "#ff6b6b", "down": "#2fd08e",
+        "chipbg": "#1f2734", "badge": "#e8b339", "badge_fg": "#161a22",
+        "accent": "#e8b339", "warnbg": "#2a1f26", "warnline": "#4a3038",
+        "medal2": "#b3543f", "medal3": "#5a6577", "lbbg": "#2a3040",
+        "hot": "#ff6b6b",
+    },
+}
+
+# 全局色值(apply_theme 重绑定,卡片函数直接引用)
+UP = DOWN = INK = SUB = "#000"
+PAPER = LINE = CARD = CHIPBG = "#fff"
+BADGE_C = BADGE_FG = ACCENT = "#000"
+WARNBG = WARNLINE = "#fff"
+MEDAL2 = MEDAL3 = LBBG = HOT = "#fff"
+
+BASE_CSS_T = """
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;height:1440px;overflow:hidden}
 body{font-family:'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif;
-     background:#f6f4ef;color:#22282e;-webkit-font-smoothing:antialiased}
+     background:__PAPER__;color:__INK__;-webkit-font-smoothing:antialiased}
 .page{width:1080px;height:1440px;display:flex;flex-direction:column;padding:52px 60px 40px}
 .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}
-.hd .badge{background:#c0392b;color:#fff;font-size:30px;font-weight:700;
+.hd .badge{background:__BADGE__;color:__BADGE_FG__;font-size:30px;font-weight:700;
            padding:12px 26px;border-radius:14px;letter-spacing:2px}
-.hd .date{font-size:30px;color:#6b6257;font-weight:600}
+.hd .date{font-size:30px;color:__SUB__;font-weight:600}
 .title{font-size:52px;font-weight:800;letter-spacing:1px;margin-bottom:10px}
 .title .bar{display:inline-block;width:14px;height:44px;border-radius:7px;
-            background:#c0392b;margin-right:18px;vertical-align:-4px}
-.subtitle{font-size:28px;color:#6b6257;margin-bottom:30px;line-height:1.5}
+            background:__UP__;margin-right:18px;vertical-align:-4px}
+.subtitle{font-size:28px;color:__SUB__;margin-bottom:30px;line-height:1.5}
 .body{flex:1;display:flex;flex-direction:column;min-height:0}
 .ft{display:flex;justify-content:space-between;align-items:center;
-    border-top:2px solid #e4ddd2;padding-top:22px;margin-top:26px;
-    font-size:24px;color:#9a9184}
-.card{background:#fff;border:1px solid #e4ddd2;border-radius:22px;
-      padding:34px 38px;box-shadow:0 4px 18px rgba(60,50,30,.06)}
-.up{color:#c0392b}.down{color:#1e7d43}
+    border-top:2px solid __LINE__;padding-top:22px;margin-top:26px;
+    font-size:24px;color:__SUB__}
+.up{color:__UP__}.down{color:__DOWN__}
 """
+
+
+def apply_theme(T):
+    global UP, DOWN, INK, SUB, PAPER, LINE, CARD, CHIPBG
+    global BADGE_C, BADGE_FG, ACCENT, WARNBG, WARNLINE
+    global MEDAL2, MEDAL3, LBBG, HOT, BASE_CSS
+    UP, DOWN, INK, SUB = T["up"], T["down"], T["ink"], T["sub"]
+    PAPER, LINE, CARD, CHIPBG = T["paper"], T["line"], T["card"], T["chipbg"]
+    BADGE_C, BADGE_FG, ACCENT = T["badge"], T["badge_fg"], T["accent"]
+    WARNBG, WARNLINE = T["warnbg"], T["warnline"]
+    MEDAL2, MEDAL3, LBBG, HOT = T["medal2"], T["medal3"], T["lbbg"], T["hot"]
+    css = BASE_CSS_T
+    for k, v in T.items():
+        css = css.replace("__" + k.upper() + "__", v)
+    BASE_CSS = css
+
+
+def get_theme(date):
+    d = str(date).replace("-", "")
+    try:
+        wd = datetime.strptime(d, "%Y%m%d").weekday()
+    except ValueError:
+        wd = 0
+    return THEMES["dark"] if wd % 2 == 1 else THEMES["light"]
 
 
 def shell(title_text, subtitle_html, body_html, date, weekday, idx):
@@ -217,18 +265,18 @@ def card_cover(d):
     body = f"""
 <style>
 .hero{{text-align:center;margin-top:8px}}
-.hero .lab{{font-size:34px;color:#6b6257;letter-spacing:6px}}
+.hero .lab{{font-size:34px;color:{SUB};letter-spacing:6px}}
 .hero .word{{font-size:190px;font-weight:900;color:{c};line-height:1.12;letter-spacing:10px}}
 .chips{{display:flex;gap:22px;justify-content:center;margin-top:26px}}
 .nodechip{{background:{c};color:#fff;font-size:30px;font-weight:700;
            padding:14px 30px;border-radius:40px}}
-.predchip{{background:#fff;border:3px solid {pc};color:{pc};font-size:30px;
+.predchip{{background:{CARD};border:3px solid {pc};color:{pc};font-size:30px;
            font-weight:700;padding:11px 30px;border-radius:40px}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:44px}}
-.k{{background:#fff;border:1px solid #e4ddd2;border-radius:20px;padding:26px 30px}}
-.kl{{font-size:27px;color:#6b6257}}
+.k{{background:{CARD};border:1px solid {LINE};border-radius:20px;padding:26px 30px}}
+.kl{{font-size:27px;color:{SUB}}}
 .kv{{font-size:46px;font-weight:800;margin-top:6px}}
-.concl{{margin-top:42px;background:#fff;border-left:10px solid {c};border-radius:14px;
+.concl{{margin-top:42px;background:{CARD};border-left:10px solid {c};border-radius:14px;
         padding:30px 34px;font-size:33px;line-height:1.65;font-weight:600}}
 </style>
 <div class="hero">
@@ -259,7 +307,7 @@ def card_metrics(d):
         ("涨停家数", f"{d.get('limit_up','-')}", "只", UP),
         ("跌停家数", f"{d.get('limit_down','-')}", "只", DOWN),
         ("连板家数", f"{d.get('lb_count','-')}", "只", UP),
-        ("最高板", f"{d.get('max_streak','-')}", f"板 · {d.get('max_streak_name','')}", UP),
+        ("最高板", f"{d.get('max_streak','-')}", f"板 · {mask_names(d.get('max_streak_name',''))}", UP),
         ("封板率", f"{d.get('seal_rate','-')}", "%", INK),
         ("炸板率", f"{d.get('broken_rate','-')}", "%", UP),
         ("晋级率", f"{d.get('promotion_rate','-')}", "%", UP),
@@ -274,21 +322,21 @@ def card_metrics(d):
     updown = f"{d.get('up_count','-')} : {d.get('down_count','-')}"
     body = f"""
 <style>
-.idxbar{{display:flex;justify-content:space-between;background:#fff;border:1px solid #e4ddd2;
+.idxbar{{display:flex;justify-content:space-between;background:{CARD};border:1px solid {LINE};
         border-radius:18px;padding:24px 26px;margin-bottom:26px}}
 .ix{{text-align:center}}
-.in{{display:block;font-size:25px;color:#6b6257}}
+.in{{display:block;font-size:25px;color:{SUB}}}
 .ic{{display:block;font-size:34px;font-weight:700;margin-top:4px}}
 .ip{{display:block;font-size:26px;font-weight:700;margin-top:2px}}
 .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}}
-.cell{{background:#fff;border:1px solid #e4ddd2;border-radius:18px;padding:26px 28px}}
-.cl{{font-size:27px;color:#6b6257}}
+.cell{{background:{CARD};border:1px solid {LINE};border-radius:18px;padding:26px 28px}}
+.cl{{font-size:27px;color:{SUB}}}
 .cv{{font-size:52px;font-weight:800;margin-top:8px}}
-.cu{{font-size:26px;font-weight:600;color:#6b6257;margin-left:8px}}
+.cu{{font-size:26px;font-weight:600;color:{SUB};margin-left:8px}}
 .wide{{display:flex;gap:20px;margin-top:20px}}
-.wcell{{flex:1;background:#fff;border:1px solid #e4ddd2;border-radius:18px;
+.wcell{{flex:1;background:{CARD};border:1px solid {LINE};border-radius:18px;
         padding:24px 28px;display:flex;justify-content:space-between;align-items:center}}
-.wl{{font-size:27px;color:#6b6257}}
+.wl{{font-size:27px;color:{SUB}}}
 .wv{{font-size:38px;font-weight:800}}
 </style>
 <div class="idxbar">{idx_html}</div>
@@ -310,7 +358,7 @@ def card_emotion(d):
     pc = SENT_COLORS.get(pred, INK)
     cycle = "".join(
         f'<div class="stop{" cur" if w == cur else ""}" '
-        f'style="{"background:%s;border-color:%s;color:#fff" % (SENT_COLORS[w], SENT_COLORS[w]) if w == cur else "background:#fff;color:%s;border-color:#e4ddd2" % SUB}">'
+        f'style="{"background:%s;border-color:%s;color:#fff" % (SENT_COLORS[w], SENT_COLORS[w]) if w == cur else "background:{CARD};color:%s;border-color:{LINE}" % SUB}">'
         f'{w}</div>' + ("" if w == "降温" else '<div class="arr">→</div>')
         for w in SENT_ORDER
     )
@@ -338,26 +386,26 @@ def card_emotion(d):
     body = f"""
 <style>
 .cycle{{display:flex;align-items:center;justify-content:space-between;
-        background:#fff;border:1px solid #e4ddd2;border-radius:18px;
+        background:{CARD};border:1px solid {LINE};border-radius:18px;
         padding:18px 20px;margin-bottom:18px}}
 .stop{{font-size:27px;font-weight:700;padding:10px 16px;border-radius:36px;
-       border:2px solid #e4ddd2;white-space:nowrap}}
+       border:2px solid {LINE};white-space:nowrap}}
 .stop.cur{{box-shadow:0 6px 16px rgba(60,40,90,.25)}}
-.arr{{color:#b9afa2;font-size:24px}}
-.nrow{{background:#fff;border-left:10px solid {SENT_COLORS.get(cur, INK)};border-radius:14px;
+.arr{{color:{SUB};font-size:24px}}
+.nrow{{background:{CARD};border-left:10px solid {SENT_COLORS.get(cur, INK)};border-radius:14px;
        padding:16px 26px;font-size:29px;line-height:1.55;font-weight:600;margin-bottom:18px}}
 .rows{{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}}
-.row{{display:flex;justify-content:space-between;align-items:center;background:#fff;
-      border:1px solid #e4ddd2;border-radius:14px;padding:12px 24px}}
-.rk{{font-size:28px;color:#6b6257;font-weight:600}}
+.row{{display:flex;justify-content:space-between;align-items:center;background:{CARD};
+      border:1px solid {LINE};border-radius:14px;padding:12px 24px}}
+.rk{{font-size:28px;color:{SUB};font-weight:600}}
 .rv{{font-size:29px;font-weight:800;text-align:right}}
 .predline{{display:flex;align-items:center;gap:22px;margin-bottom:16px}}
 .predbig{{background:{pc};color:#fff;font-size:36px;font-weight:900;
           padding:10px 36px;border-radius:18px}}
-.predlab{{font-size:28px;color:#6b6257;font-weight:700}}
-.focus{{background:#fff;border:1px dashed #cfc4b4;border-radius:16px;padding:16px 24px}}
-.fh{{font-size:26px;font-weight:800;color:#8a6d3b;margin-bottom:8px}}
-.fs{{font-size:25px;line-height:1.5;color:#3c372f;font-weight:600}}
+.predlab{{font-size:28px;color:{SUB};font-weight:700}}
+.focus{{background:{CARD};border:1px dashed {ACCENT};border-radius:16px;padding:16px 24px}}
+.fh{{font-size:26px;font-weight:800;color:{ACCENT};margin-bottom:8px}}
+.fs{{font-size:25px;line-height:1.5;color:{INK};font-weight:600}}
 </style>
 <div class="cycle">{cycle}</div>
 <div class="nrow">{note}</div>
@@ -378,7 +426,7 @@ def card_ladder(d):
         label = re.sub(r"^\d+\s*连板", "", item.get("label", "")).strip("（）()")
         label = label.replace(",", "·")
         chips = "".join(f'<span class="chip">{mask_name(n)}</span>' for n in item.get("stocks", []))
-        hot = ' style="background:#c0392b"' if st == max((i.get("streak", 0) for i in d.get("ladder", [])), default=0) else ""
+        hot = f' style="background:{HOT}"' if st == max((i.get("streak", 0) for i in d.get("ladder", [])), default=0) else ""
         rows.append(f"""
 <div class="lrow"><div class="lb"{hot}><b>{st}</b><i>板</i></div>
 <div class="lmain"><div class="llab">{label}</div><div class="lchips">{chips}</div></div></div>""")
@@ -398,22 +446,22 @@ def card_ladder(d):
     body = f"""
 <style>
 .lrows{{display:flex;flex-direction:column;gap:10px}}
-.lrow{{display:flex;gap:22px;align-items:flex-start;background:#fff;
-       border:1px solid #e4ddd2;border-radius:18px;padding:12px 22px}}
-.lb{{min-width:120px;text-align:center;background:#8a5a44;color:#fff;
+.lrow{{display:flex;gap:22px;align-items:flex-start;background:{CARD};
+       border:1px solid {LINE};border-radius:18px;padding:12px 22px}}
+.lb{{min-width:120px;text-align:center;background:{LBBG};color:#fff;
      border-radius:14px;padding:8px 0 6px}}
 .lb b{{font-size:46px;font-weight:900}}
 .lb i{{font-style:normal;font-size:25px;margin-left:4px}}
-.llab{{font-size:24px;color:#6b6257;margin-bottom:8px}}
+.llab{{font-size:24px;color:{SUB};margin-bottom:8px}}
 .lchips{{display:flex;flex-wrap:wrap;gap:9px}}
-.chip{{font-size:27px;font-weight:700;background:#f4efe6;border:1px solid #e4ddd2;
-       border-radius:10px;padding:6px 14px;color:#22282e}}
-.statline{{margin-top:14px;background:#fff;border:1px solid #e4ddd2;border-radius:14px;
-           padding:12px 22px;font-size:27px;font-weight:700;color:#5a4f42}}
-.extra{{margin-top:10px;background:#fff;border:1px solid #e4ddd2;border-radius:14px;
-        padding:12px 22px;font-size:24px;line-height:1.5;color:#3c372f}}
-.extra b{{color:#8a6d3b;margin-right:12px}}
-.warn{{margin-top:10px;background:#fdf3ef;border:1px solid #eac8bd;border-radius:14px;
+.chip{{font-size:27px;font-weight:700;background:{CHIPBG};border:1px solid {LINE};
+       border-radius:10px;padding:6px 14px;color:{INK}}}
+.statline{{margin-top:14px;background:{CARD};border:1px solid {LINE};border-radius:14px;
+           padding:12px 22px;font-size:27px;font-weight:700;color:{INK}}}
+.extra{{margin-top:10px;background:{CARD};border:1px solid {LINE};border-radius:14px;
+        padding:12px 22px;font-size:24px;line-height:1.5;color:{INK}}}
+.extra b{{color:{ACCENT};margin-right:12px}}
+.warn{{margin-top:10px;background:{WARNBG};border:1px solid {WARNLINE};border-radius:14px;
        padding:12px 22px;font-size:25px;font-weight:700;color:#c0392b}}
 </style>
 <div class="lrows">{''.join(rows)}</div>
@@ -428,7 +476,7 @@ def card_ladder(d):
 def card_lines(d):
     blocks = []
     palette = ["#c0392b", "#b8352c", "#a94a2c", "#9a5cc4", "#4a6fa5",
-               "#3f9d76", "#e0a63f", "#7d99c0", "#8a6d3b"]
+               "#3f9d76", "#e0a63f", "#7d99c0", "{ACCENT}"]
     groups = d.get("main_lines") or []
     shown = groups[:7] if len(groups) > 8 else groups
     rest = groups[len(shown):]
@@ -454,14 +502,14 @@ def card_lines(d):
     body = f"""
 <style>
 .mgs{{display:flex;flex-direction:column;gap:10px}}
-.mg{{background:#fff;border-radius:14px;padding:10px 22px;border:1px solid #e4ddd2}}
+.mg{{background:{CARD};border-radius:14px;padding:10px 22px;border:1px solid {LINE}}}
 .mh{{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}}
 .mn{{font-size:28px;font-weight:800}}
 .mc{{color:#fff;font-size:23px;font-weight:700;border-radius:18px;padding:2px 14px}}
-.mt{{font-size:23px;color:#6b6257;line-height:1.42}}
-.rest{{margin-top:2px;background:#fff;border:1px dashed #cfc4b4;border-radius:14px;
-       padding:10px 22px;font-size:23px;line-height:1.45;color:#6b6257}}
-.rest b{{color:#8a6d3b;margin-right:12px}}
+.mt{{font-size:23px;color:{SUB};line-height:1.42}}
+.rest{{margin-top:2px;background:{CARD};border:1px dashed {ACCENT};border-radius:14px;
+       padding:10px 22px;font-size:23px;line-height:1.45;color:{SUB}}}
+.rest b{{color:{ACCENT};margin-right:12px}}
 </style>
 <div class="mgs">{''.join(blocks)}{rest_html}</div>
 """
@@ -473,7 +521,7 @@ def card_lines(d):
 def card_seal(d):
     rows = []
     for i, t in enumerate(d.get("top_seal") or []):
-        medal = ["#c0392b", "#b8352c", "#a94a2c"][i] if i < 3 else "#b9afa2"
+        medal = ["#c0392b", "#b8352c", "#a94a2c"][i] if i < 3 else "{SUB}"
         rows.append(f"""
 <div class="srow"><span class="rk" style="background:{medal}">{i + 1}</span>
 <span class="sn">{mask_name(t.get('name',''))}<i>{t.get('code','')}</i></span>
@@ -482,21 +530,21 @@ def card_seal(d):
     body = f"""
 <style>
 .srows{{display:flex;flex-direction:column;gap:10px}}
-.srow{{display:flex;align-items:center;gap:22px;background:#fff;
-       border:1px solid #e4ddd2;border-radius:14px;padding:11px 24px}}
+.srow{{display:flex;align-items:center;gap:22px;background:{CARD};
+       border:1px solid {LINE};border-radius:14px;padding:11px 24px}}
 .rk{{width:48px;height:48px;border-radius:50%;color:#fff;display:flex;
      align-items:center;justify-content:center;font-size:26px;font-weight:800;flex:none}}
 .sn{{font-size:31px;font-weight:800;flex:1}}
-.sn i{{font-style:normal;font-size:23px;color:#9a9184;font-weight:500;margin-left:14px}}
+.sn i{{font-style:normal;font-size:23px;color:{SUB};font-weight:500;margin-left:14px}}
 .sv{{font-size:33px;font-weight:900;color:#c0392b}}
-.total{{margin-top:14px;background:#fff;border:1px solid #e4ddd2;border-radius:14px;
+.total{{margin-top:14px;background:{CARD};border:1px solid {LINE};border-radius:14px;
         padding:12px 24px;display:flex;justify-content:space-between;align-items:center}}
-.tl{{font-size:27px;color:#6b6257;font-weight:600}}
+.tl{{font-size:27px;color:{SUB};font-weight:600}}
 .tv{{font-size:33px;font-weight:900}}
 </style>
 <div class="srows">{''.join(rows)}</div>
 <div class="total"><span class="tl">TOP10 封单合计(收盘口径)</span>
-<span class="tv" style="color:#c0392b">{total:.2f} 亿</span></div>
+<span class="tv" style="color:{UP}">{total:.2f} 亿</span></div>
 """
     return shell("收盘封单 TOP10", "封单金额 = 收盘买单封死涨停价的对应金额",
                  body, d.get("date", ""), d.get("weekday", ""), 6)
@@ -506,19 +554,19 @@ def card_seal(d):
 def card_risk(d):
     risks = [mask_free_text(clip(first_sentence(x, 120), 62)) for x in (d.get("risk_signals") or [])[:5]]
     watches = [mask_free_text(clip(first_sentence(x, 120), 62)) for x in (d.get("watch_next") or [])[:4]]
-    rhtml = "".join(f'<div class="ri"><span class="dot" style="background:#c0392b"></span><span>{x}</span></div>' for x in risks)
+    rhtml = "".join(f'<div class="ri"><span class="dot" style="background:{UP}"></span><span>{x}</span></div>' for x in risks)
     whtml = "".join(f'<div class="ri"><span class="dot" style="background:#4a6fa5"></span><span>{x}</span></div>' for x in watches)
     body = f"""
 <style>
 .sec{{margin-bottom:12px}}
 .sh{{display:flex;align-items:center;gap:16px;margin-bottom:6px}}
 .sh b{{font-size:32px;font-weight:900}}
-.sh i{{font-style:normal;font-size:24px;color:#9a9184}}
-.ri{{display:flex;gap:14px;background:#fff;border:1px solid #e4ddd2;border-radius:14px;
-     padding:9px 18px;font-size:24px;line-height:1.4;margin-bottom:7px;color:#3c372f}}
+.sh i{{font-style:normal;font-size:24px;color:{SUB}}}
+.ri{{display:flex;gap:14px;background:{CARD};border:1px solid {LINE};border-radius:14px;
+     padding:9px 18px;font-size:24px;line-height:1.4;margin-bottom:7px;color:{INK}}}
 .dot{{width:11px;height:11px;border-radius:50%;flex:none;margin-top:11px}}
 </style>
-<div class="sec"><div class="sh"><b style="color:#c0392b">⚠ 风险信号</b><i>当日已验证 · 取前五条</i></div>{rhtml}</div>
+<div class="sec"><div class="sh"><b style="color:{UP}">⚠ 风险信号</b><i>当日已验证 · 取前五条</i></div>{rhtml}</div>
 <div class="sec"><div class="sh"><b style="color:#4a6fa5">◎ 明日观察</b><i>四条主线</i></div>{whtml}</div>
 """
     return shell("风险信号与明日观察", "退潮/分歧期的仓位与节奏参照",
@@ -541,6 +589,8 @@ def main():
     date = pick_date(sys.argv)
     jpath = DATA_DIR / f"{date}.json"
     d = json.loads(jpath.read_text(encoding="utf-8"))
+    theme = get_theme(date)
+    apply_theme(theme)
     outdir = OUT_ROOT / date
     outdir.mkdir(parents=True, exist_ok=True)
     chrome = find_chrome()
@@ -562,7 +612,7 @@ def main():
         results.append((fname, cname, ok, ppath))
         print(f"[{'OK ' if ok else 'FAIL'}] {fname}.png ({cname})"
               + ("" if ok else f"  rc={r.returncode} {r.stderr[:200]}"))
-    print(f"\n输出目录: {outdir}")
+    print(f"\n主题: {theme['name']} | 输出目录: {outdir}")
 
 
 if __name__ == "__main__":
