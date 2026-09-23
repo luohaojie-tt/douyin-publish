@@ -22,6 +22,7 @@ import base64
 import glob
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -136,6 +137,38 @@ def clip(s, n):
     return s if len(s) <= n else s[:n].rstrip(",、,; ") + "…"
 
 
+def mask_name(name):
+    """股票名脱敏:取前两字符缩写(ST 前缀保留)。华瓷股份→华瓷"""
+    name = (str(name) or "").strip()
+    if not name:
+        return name
+    prefix = ""
+    core = name
+    for p in ("*ST", "ST"):
+        if core.startswith(p):
+            prefix = p
+            core = core[len(p):]
+            break
+    core = core.strip()
+    if len(core) <= 2:
+        return prefix + core
+    return prefix + core[:2]
+
+
+def mask_names(s):
+    """对顿号/逗号分隔的多名文本逐个脱敏"""
+    if not s:
+        return s
+    parts = re.split(r"([、,，;;\s]+)", str(s))
+    out = []
+    for p in parts:
+        if p and re.match(r"^[\u4e00-\u9fa5A-Za-z*]{2,8}$", p):
+            out.append(mask_name(p))
+        else:
+            out.append(p)
+    return "".join(out)
+
+
 def gen_title(d):
     """按情绪选风格池、按日期确定性轮换——每天结构不同,无个股、无模板词。"""
     date = d.get("date", "")
@@ -173,7 +206,7 @@ def gen_desc(d):
     note = first_sentence(d.get("sentiment_note", ""), 46)
     strategy = STRATEGY.get(s, "按情绪周期纪律执行")
     topics = TOPICS_BY_WD.get(wd, "#股市观察 #交易日记")
-    mx, ms = nv(d.get("max_streak_name")), nv(d.get("max_streak"))
+    mx, ms = mask_names(nv(d.get("max_streak_name"))), nv(d.get("max_streak"))
     lines = [
         f"{md} 盘面手记 | 情绪:{s},明日预判:{pred}",
         f"今天涨停 {nv(d.get('limit_up'))} 家、炸板率 {nv(d.get('broken_rate'))}%,"

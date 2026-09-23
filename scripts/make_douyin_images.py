@@ -59,6 +59,48 @@ def pick_badge(date):
         return HEADER_BADGES[0]
 
 
+def mask_name(name):
+    """股票名脱敏:取前两字符缩写(ST 前缀保留)。华瓷股份→华瓷,大亚圣象→大亚"""
+    name = (name or "").strip()
+    if not name:
+        return name
+    prefix = ""
+    core = name
+    for p in ("*ST", "ST"):
+        if core.startswith(p):
+            prefix = p
+            core = core[len(p):]
+            break
+    core = core.strip()
+    if len(core) <= 2:
+        return prefix + core
+    return prefix + core[:2]
+
+
+def mask_names(s):
+    """对顿号/逗号分隔的多名文本逐个脱敏"""
+    if not s:
+        return s
+    parts = re.split(r"([、,，;;\s]+)", s)
+    out = []
+    for p in parts:
+        if p and re.match(r"^[\u4e00-\u9fa5A-Za-z*]{2,8}$", p):
+            out.append(mask_name(p))
+        else:
+            out.append(p)
+    return "".join(out)
+
+
+CODE_PAT = re.compile(r"([\u4e00-\u9fa5]{2,4})([（(]\d{6}[\.]?(?:SZ|SH|BJ)?[）)])")
+
+
+def mask_free_text(s):
+    """自由文本脱敏:把「股票名(代码)」模式的股票名替换为缩写。"""
+    if not s:
+        return s
+    return CODE_PAT.sub(lambda m: mask_name(m.group(1)) + m.group(2), s)
+
+
 def first_sentence(s, maxlen=84):
     """取第一句;超长截断。用于长 note 的卡片化。"""
     if not s:
@@ -164,7 +206,7 @@ def card_cover(d):
     boxes = [
         ("涨停家数", f"{d.get('limit_up','-')} 只"),
         ("连板家数", f"{d.get('lb_count','-')} 只"),
-        ("最高板", f"{d.get('max_streak','-')}板 {d.get('max_streak_name','')}"),
+        ("最高板", f"{d.get('max_streak','-')}板 {mask_names(d.get('max_streak_name',''))}"),
         ("炸板率", f"{d.get('broken_rate','-')}%"),
     ]
     grid = "".join(
@@ -273,8 +315,9 @@ def card_emotion(d):
         for w in SENT_ORDER
     )
     promo = d.get("max_streak_promo", "")
+    mx_masked = mask_names(d.get("max_streak_name", ""))
     rows = [
-        ("① 空间高度", f"{d.get('max_streak_name','')} {d.get('max_streak','-')}板{' · ' + promo if promo else ''}",
+        ("① 空间高度", f"{mx_masked} {d.get('max_streak','-')}板{' · ' + promo if promo else ''}",
          UP if promo == "晋级" else SUB),
         ("② 涨停/连板家数", f"涨停 {d.get('limit_up','-')} 只 · 连板 {d.get('lb_count','-')} 只", INK),
         ("③ 炸板率", f"{d.get('broken_rate','-')}%" + (" · 破 20% 警戒线" if isinstance(d.get("broken_rate"), (int, float)) and d["broken_rate"] >= 20 else ""),
@@ -289,7 +332,7 @@ def card_emotion(d):
         f'<span class="rv" style="color:{col}">{v}</span></div>'
         for k, v, col in rows
     )
-    note = first_sentence(d.get("node_note", ""), 90)
+    note = mask_free_text(first_sentence(d.get("node_note", ""), 90))
     # 内容合规:"明日关注:个股"→"操作纪律"话术(去荐股指向)
     strategy = STRATEGY.get(cur, "按情绪周期纪律执行")
     body = f"""
@@ -334,7 +377,7 @@ def card_ladder(d):
         st = item.get("streak", "")
         label = re.sub(r"^\d+\s*连板", "", item.get("label", "")).strip("（）()")
         label = label.replace(",", "·")
-        chips = "".join(f'<span class="chip">{n}</span>' for n in item.get("stocks", []))
+        chips = "".join(f'<span class="chip">{mask_name(n)}</span>' for n in item.get("stocks", []))
         hot = ' style="background:#c0392b"' if st == max((i.get("streak", 0) for i in d.get("ladder", [])), default=0) else ""
         rows.append(f"""
 <div class="lrow"><div class="lb"{hot}><b>{st}</b><i>板</i></div>
@@ -343,7 +386,7 @@ def card_ladder(d):
     extra = ""
     if "区间结构另计" in broken:
         seg = broken.split("区间结构另计", 1)[1].lstrip("：:（( ")
-        seg = clip(seg.split("。")[0], 84)
+        seg = mask_free_text(clip(seg.split("。")[0], 84))
         if seg:
             extra = f'<div class="extra"><b>区间结构另计</b>{seg}</div>'
     stats = d.get("ladder_stats", {})
@@ -394,7 +437,7 @@ def card_lines(d):
         if len(name) > 16 and "其他" in name:
             name = "其他零散(多行业)"
         col = palette[i % len(palette)]
-        note = clip(first_sentence(g.get("note", ""), 200), 54)
+        note = mask_free_text(clip(first_sentence(g.get("note", ""), 200), 54))
         blocks.append(f"""
 <div class="mg" style="border-left:10px solid {col}">
  <div class="mh"><span class="mn">{name}</span><span class="mc" style="background:{col}">{g.get('count','-')} 只</span></div>
@@ -433,7 +476,7 @@ def card_seal(d):
         medal = ["#c0392b", "#b8352c", "#a94a2c"][i] if i < 3 else "#b9afa2"
         rows.append(f"""
 <div class="srow"><span class="rk" style="background:{medal}">{i + 1}</span>
-<span class="sn">{t.get('name','')}<i>{t.get('code','')}</i></span>
+<span class="sn">{mask_name(t.get('name',''))}<i>{t.get('code','')}</i></span>
 <span class="sv">{seal_yi(t.get('seal'))} 亿</span></div>""")
     total = sum(x.get("seal", 0) or 0 for x in (d.get("top_seal") or [])) / 10000
     body = f"""
@@ -461,8 +504,8 @@ def card_seal(d):
 
 # ---------------------------------------------------------------- 卡7 风险与观察
 def card_risk(d):
-    risks = [clip(first_sentence(x, 120), 62) for x in (d.get("risk_signals") or [])[:5]]
-    watches = [clip(first_sentence(x, 120), 62) for x in (d.get("watch_next") or [])[:4]]
+    risks = [mask_free_text(clip(first_sentence(x, 120), 62)) for x in (d.get("risk_signals") or [])[:5]]
+    watches = [mask_free_text(clip(first_sentence(x, 120), 62)) for x in (d.get("watch_next") or [])[:4]]
     rhtml = "".join(f'<div class="ri"><span class="dot" style="background:#c0392b"></span><span>{x}</span></div>' for x in risks)
     whtml = "".join(f'<div class="ri"><span class="dot" style="background:#4a6fa5"></span><span>{x}</span></div>' for x in watches)
     body = f"""
