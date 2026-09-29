@@ -11,7 +11,10 @@ agent_created: true
 ## 铁律（先读）
 
 1. **`--post` 发布必须获得用户当轮明确确认**（如回复"发"）。填表 ≠ 发布。抖音作品发布后可删除但已有曝光，仍按"发前必过目"执行。
-2. **发布形态是全图卡组**（用户 2026-09-23 拍板）：所有内容图片化，标题/简介只放短文字+话题 `#涨停复盘 #短线打板`。**不要**退回"一半文字一半图"的淘股吧混排形式。
+2. **发布形态（2026-09-29 用户拍板改为视频优先）**：
+   - **默认：视频**——上传 `复盘工作台\video\preview\复盘视频-YYYYMMDD.mp4`（由 `fupan-video` 技能生成，1080×1920/30fps/约 84s），标题/简介仍用 `gen_title`/`gen_desc`（合规版，见"内容合规"章）
+   - **回退：图文**——加 `--images` 上传 7 张卡片（`make_douyin_images.py` 产物）；卡片另可作为视频素材复用
+   - 用户明确要求：之后一律视频，不再用图片组发抖音
 3. **专用浏览器必须由用户双击 `start_douyin_browser.bat` 启动**（CDP 9224、独立 profile `~/.workbuddy/chrome-douyin-profile`）——执行环境会回收 AI 启动的所有进程，只有用户亲手启动的进程能常驻。
 4. 用户账号密码永远不要索要或经手；首次扫码登录后登录态持久。
 5. **抖音风控强于淘股吧**（滑块/IP 敏感）：遇滑块或验证码脚本会截图退出，让用户在窗口里人工过掉后重跑；不要重试硬闯。
@@ -39,19 +42,21 @@ agent_created: true
 
 所有 python 命令用 venv 解释器：`C:\Users\lhj\.workbuddy\binaries\python\envs\default\Scripts\python.exe`。命令输出一律重定向到文件后 Read 读取（本机 shell stdout 不可靠）。
 
-1. **生成图片卡组**：`python 复盘工作台\make_douyin_images.py YYYYMMDD`
-   - 产出 `reports\douyin\YYYYMMDD\01_cover.png ~ 07_risk.png`（1080×1440 竖版，7 张，张数固定但内容随 JSON 浮动）+ 同名 .html（调试用）
-   - 字段驱动，纯本地 Chrome headless 截图，无 CDN 无风控问题
-   - 若用户要求调整视觉：改 `make_douyin_images.py` 内对应 card 函数重跑即可
-2. **上传+填表+预览**：`python 复盘工作台\douyin_publish.py YYYYMMDD`
-   - 自动：进图文上传模式 → CDP `DOM.setFileInputFiles` 批量上传 7 张 → 填标题（≤19 字自动生成）与简介（情绪/指标/预判/关注票+话题）→ 截图 `YYYYMMDD-发布预览.png`
-   - 把截图展示给用户 + 提示用户到 Chrome 窗口核对图片顺序与文案
+1. **生成素材**：
+   - 视频（默认）：`fupan-video` 技能产出 `video/preview/复盘视频-YYYYMMDD.mp4`（1080×1920/30fps，约 84s，5MB 级）
+   - 图文（可选）：`python 复盘工作台\make_douyin_images.py YYYYMMDD` → `reports\douyin\YYYYMMDD\01_cover.png ~ 07_risk.png`
+2. **上传+填表+预览**：`python 复盘工作台\douyin_publish.py YYYYMMDD`（默认视频；`--images` 走图文）
+   - 视频模式：自动切「发布视频」tab → `DOM.setFileInputFiles` 上传 → **轮询等待转码/上传完成（最长 300s，5s 一次）** → 填标题/简介 → 截图 `YYYYMMDD-发布预览.png`
+   - 图文模式：进图文 tab → 批量上传 7 张 → 填标题/简介 → 截图
+   - 把截图展示给用户 + 提示用户到 Chrome 窗口核对（视频核对封面帧/时长、图片核对顺序）
    - 标题/简介文案在跑之前先打印出来给用户看
-   - 变体参数：`--refill`（页面已有图，只重填标题/简介）、`--force`（配合页面"清空并重新上传"按钮手工清空后重传）
+   - 变体参数：`--refill`（页面已有素材，只重填标题/简介）、`--force`（配合页面"清空并重新上传"）、`--images`（回退图文）
 3. **配乐（人工）**：请用户在窗口点『选择音乐/修改音乐』→ 在面板里搜歌并点选 → 点『使用』。用户完成后跑核验脚本确认「选择音乐」行已变为所选曲目。
 4. **发布**：用户当轮明确说"发"后：`python 复盘工作台\douyin_publish.py YYYYMMDD --post`
    - 点"发布"按钮 → 8 秒后截图 `YYYYMMDD-发布结果.png`
-   - **首次会弹短信二次验证**：让用户在窗口点"获取验证码"→填短信码→点"验证",完成后核验 URL 是否跳 `content/manage` 且作品列表出现「7张|标题」
+   - **首次会弹短信二次验证**:让用户在窗口点"获取验证码"→填短信码→点"验证",完成后核验 URL 是否跳 `content/manage` 且作品列表出现「7张|标题」
+   - ⚠️ **核验必刷新**:发布后跳转的 manage 页是缓存视图(仍显示旧作品),**必须 `Page.navigate` 重新加载 manage 后再读列表**才能确认新作品(2026-09-24/09-28 两次遇到);单次读取会误判"未发布"
+   - 用户也可自行在窗口点"发布"(此时脚本侧改为只做核验);风控趋松时可能不弹短信验证(2026-09-28 实测)
    - 成功判据满足即交付:提示作品链接在抖音 App「我→作品」里复制
 5. **收尾**：发布后 tab 停在作品管理页。
 

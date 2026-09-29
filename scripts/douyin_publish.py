@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-douyin_publish.py — 抖音图文自动发布(半自动:脚本上传+填文本+预览,人工确认后提交)
+douyin_publish.py — 抖音作品自动发布(半自动:脚本上传+填文本+预览,人工确认后提交)
 
 用法(在 venv python 下运行,输出重定向到文件后 Read):
-  python douyin_publish.py 20260922            # 上传图片 + 填标题/简介 + 预览截图
-  python douyin_publish.py 20260922 --post     # 人工确认后,真正点击『发布』
+  python douyin_publish.py 20260929            # 【默认视频】上传 video/preview/复盘视频-YYYYMMDD.mp4 + 填标题/简介 + 预览
+  python douyin_publish.py 20260929 --post     # 人工确认后,真正点击『发布』
+  python douyin_publish.py 20260929 --images   # 回退图文模式(7 张卡片)
 
 前提:
   1. 双击 start_douyin_browser.bat 启动的自动化 Chrome 已运行(CDP 端口 9224)
   2. 该窗口里已登录抖音创作者平台(登录态存独立 profile,仅首次需扫码)
-  3. 图片已生成:reports/douyin/YYYYMMDD/0*.png(make_douyin_images.py 产出)
+  3. 视频模式:video/preview/复盘视频-YYYYMMDD.mp4 已生成(fupan-video 技能)
+     图文模式:reports/douyin/YYYYMMDD/0*.png 已生成(make_douyin_images.py)
 
 设计:
   - 上传走 CDP DOM.setFileInputFiles(对 file input 直设文件,不经系统对话框)
+  - 视频上传后轮询等待转码完成(最长 5 分钟)
   - 页面 DOM 不确定处全部落诊断(reports/douyin/YYYYMMDD/_publish_diag.json),
     失败时先读诊断再修锚点,不要盲猜
   - React 受控输入用 native value setter + input 事件;contenteditable 用 execCommand
@@ -33,6 +36,7 @@ import websocket
 DEBUG_PORT = 9224
 BASE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_URL = "https://creator.douyin.com/creator-micro/content/upload"
+VIDEO_DIR = os.path.join(BASE, "video", "preview")  # 复盘视频目录(fupan-video 产物)
 TITLE_MAX = 20  # 抖音图文标题上限实测 20 字符(页面提示"标题内容仅支持20个字符"),留 1 字余量
 DIAG_NAME = "_publish_diag.json"
 
@@ -118,6 +122,86 @@ def find_creator_page(cdp_pages):
         if "creator.douyin.com" in (t.get("url") or ""):
             return t
     return pages[0] if pages else None
+
+
+def find_video(date):
+    """按日期找复盘视频(fupan-video 产物):video/preview/复盘视频-YYYYMMDD.mp4
+    找不到日期匹配时回落最新一个 mp4(并打印警告)。"""
+    if not os.path.isdir(VIDEO_DIR):
+        return None
+    exact = os.path.join(VIDEO_DIR, f"复盘视频-{date}.mp4")
+    if os.path.exists(exact):
+        return exact
+    vids = sorted(glob.glob(os.path.join(VIDEO_DIR, "*.mp4")))
+    if not vids:
+        return None
+    latest = vids[-1]
+    print(f"[警告] 未找到 复盘视频-{date}.mp4,回落使用最新视频: {os.path.basename(latest)}")
+    return latest
+
+
+def switch_to_video(cdp):
+    """确保在视频上传模式:页面已有 video file input 则直接可用,否则点『发布视频』tab。"""
+    fis = find_file_inputs(cdp)
+    if any("video" in (f.get("accept") or "") for f in fis):
+        return {"mode": "already_video", "inputs": len(fis)}
+    r = cdp.eval_js(
+        "(function(){ var best=null;"
+        " document.querySelectorAll('div,span,li,button,a,label').forEach(function(e){"
+        "  var t=(e.innerText||'').trim();"
+        "  if((t==='发布视频'||t==='上传视频'||t==='视频')&&e.children.length<=2){"
+        "   if(!best) best=e; }});"
+        " if(!best) return 'NO_TAB';"
+        " best.click(); return 'CLICKED'; })()"
+    )
+    if r == "CLICKED":
+        time.sleep(2.5)
+    fis = find_file_inputs(cdp)
+    return {"mode": r, "inputs": len(fis),
+            "video_input": any("video" in (f.get("accept") or "") for f in fis)}
+
+
+def upload_video(cdp, video_path):
+    """上传视频文件并等待转码/上传完成(比图文慢,最长等 5 分钟)。"""
+    # 防重复:页面已有视频(出现"重新上传"/"更换封面"等)则跳过
+    ready = cdp.eval_js(
+        "(function(){ var b=document.body.innerText||'';"
+        " return (/重新上传|更换封面|上传成功|作品描述/.test(b)&&document.querySelector('video'))?'Y':'N'; })()"
+    )
+    if ready == "Y":
+        return {"ok": True, "skipped": True}
+    fis = find_file_inputs(cdp)
+    target = None
+    for f in fis:
+        if "video" in (f.get("accept") or ""):
+            target = f
+            break
+    if target is None and fis:
+        target = fis[-1]
+    if target is None:
+        return {"ok": False, "reason": "NO_FILE_INPUT", "file_inputs": fis}
+    cdp.call("DOM.setFileInputFiles", files=[os.path.abspath(video_path)],
+             nodeId=target["nodeId"])
+    # 轮询等待:出现 video 元素 + 编辑区文本(上传/转码完成)
+    last_flag, stable = "", 0
+    for i in range(60):  # 60 × 5s = 300s
+        time.sleep(5)
+        st = cdp.eval_js(
+            "(function(){ var b=document.body.innerText||'';"
+            " var hasV=!!document.querySelector('video');"
+            " var prog=(b.match(/(\\d{1,3})%/)||[])[0]||'';"
+            " var done=hasV&&/重新上传|更换封面|作品描述|上传完成/.test(b);"
+            " return (done?'DONE':'WAIT')+'|'+(hasV?'V':'-')+'|'+prog; })()"
+        )
+        print(f"   上传轮询#{i+1}: {st}")
+        if str(st).startswith("DONE"):
+            return {"ok": True, "waited": (i + 1) * 5, "status": st}
+        if st == last_flag:
+            stable += 1
+        else:
+            stable = 0
+        last_flag = st
+    return {"ok": False, "reason": "UPLOAD_TIMEOUT", "status": last_flag}
 
 
 # ---------------------------------------------------------------- 文本生成
@@ -721,14 +805,26 @@ def main():
         sys.exit(1)
     date = sys.argv[1]
     do_post = "--post" in sys.argv
-    do_refill = "--refill" in sys.argv  # 图已在页面上,只重填标题/简介
+    do_refill = "--refill" in sys.argv  # 素材已在页面上,只重填标题/简介
     do_force = "--force" in sys.argv    # 清空重传(配合页面"清空并重新上传"按钮手工操作)
+    do_images = "--images" in sys.argv  # 显式回退图文模式(2026-09-29 起默认视频)
 
-    outdir = OUT_DIR_TMPL = os.path.join(BASE, "reports", "douyin", date)
+    outdir = os.path.join(BASE, "reports", "douyin", date)
+    os.makedirs(outdir, exist_ok=True)
     img_paths = sorted(glob.glob(os.path.join(outdir, "0*.png")))
-    if not img_paths:
+    video_path = None if do_images else find_video(date)
+    if not do_images and not video_path:
+        print("未找到视频(video/preview/复盘视频-%s.mp4)。" % date)
+        print("请先跑 fupan-video 生成视频;或加 --images 回退图文模式。")
+        sys.exit(1)
+    if do_images and not img_paths:
         print("图片不存在,先跑 make_douyin_images.py:", outdir)
         sys.exit(1)
+    if video_path:
+        print("模式: 视频 (%.1f MB) %s" % (os.path.getsize(video_path) / 1048576,
+                                          os.path.basename(video_path)))
+    else:
+        print("模式: 图文 (%d 张)" % len(img_paths))
 
     jpath = os.path.join(BASE, "data", f"{date}.json")
     d = json.load(open(jpath, encoding="utf-8"))
@@ -747,7 +843,9 @@ def main():
         print("未找到抖音标签页——请先运行 start_douyin_browser.bat 并登录")
         sys.exit(1)
     cdp = CDP(t["webSocketDebuggerUrl"])
-    diag = {"date": date, "imgs": [os.path.basename(p) for p in img_paths]}
+    diag = {"date": date, "mode": "images" if do_images else "video",
+            "video": os.path.basename(video_path) if video_path else None,
+            "imgs": [os.path.basename(p) for p in img_paths]}
 
     music_kw = None
     if "--music" in sys.argv:
@@ -819,6 +917,31 @@ def main():
         if do_refill:
             diag["switch"] = "REFILL_MODE"
             print("refill 模式:跳过上传,只重填标题/简介")
+        elif video_path:
+            # ---- 视频模式(fupan-video 成片)----
+            sw = switch_to_video(cdp)
+            diag["switch"] = sw
+            print("进入视频模式:", json.dumps(sw, ensure_ascii=False))
+            info = dump_form(cdp)
+            if "login" in (cdp.eval_js("location.href") or "") or \
+                    "扫码登录" in (info.get("bodyText") or ""):
+                shot = os.path.join(outdir, f"{date}-待登录.png")
+                cdp.screenshot(shot)
+                print(">>> 抖音未登录。请在 Chrome 窗口扫码登录后重跑。截图:", shot)
+                open(os.path.join(outdir, DIAG_NAME), "w", encoding="utf-8").write(
+                    json.dumps(diag, ensure_ascii=False, indent=2))
+                sys.exit(2)
+            if not sw.get("video_input") and sw.get("mode") != "already_video":
+                print(">>> 未找到 video file input,按 switch 诊断修锚点:", sw)
+            up = upload_video(cdp, video_path)
+            diag["upload"] = up
+            print("视频上传:", json.dumps({k: v for k, v in up.items() if k != "file_inputs"},
+                                          ensure_ascii=False))
+            if not up.get("ok"):
+                diag["form_after_fail"] = dump_form(cdp)
+                print(">>> 视频上传未完成(reason=%s),诊断已写 _publish_diag.json" % up.get("reason"))
+            elif up.get("skipped"):
+                print(">>> 页面已有视频,跳过重复上传")
         else:
             sw = switch_to_imagetext(cdp)
             diag["switch"] = sw
